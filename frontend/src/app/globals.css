@@ -1,0 +1,164 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-inter: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+body {
+  font-family: var(--font-inter);
+  color: #0f172a;
+  background-color: #f4f6fa;
+  background-image:
+    radial-gradient(60rem 22rem at 50% -8rem, rgba(30, 58, 138, 0.08), transparent 70%),
+    radial-gradient(40rem 18rem at 85% -6rem, rgba(245, 158, 11, 0.07), transparent 70%);
+  background-attachment: fixed;
+  font-feature-settings: 'cv11', 'ss01';
+}
+
+::selection {
+  background-color: #bfdbfe;
+}
+
+:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Slim, neutral scrollbars for scroll regions */
+.scroll-slim {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+.scroll-slim::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scroll-slim::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 9999px;
+}
+
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+@layer components {
+  /* Page header */
+  .eyebrow {
+    @apply text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400;
+  }
+  .page-title {
+    @apply mt-1 flex items-center gap-2 text-xl sm:text-2xl font-bold tracking-tight text-govNavy-900;
+  }
+  .page-sub {
+    @apply mt-1 max-w-3xl text-xs sm:text-sm leading-relaxed text-slate-500;
+  }
+
+  /* Surfaces */
+  .card {
+    @apply bg-white border border-slate-200/90 rounded-xl shadow-soft;
+  }
+  .card-hover {
+    @apply transition-all duration-200 hover:shadow-lift hover:-translate-y-0.5 hover:border-slate-300;
+  }
+  .card-pad {
+    @apply bg-white border border-slate-200/90 rounded-xl shadow-soft p-4 sm:p-5;
+  }
+  .section-head {
+    @apply flex items-center justify-between gap-3 border-b border-slate-100 pb-3 mb-4;
+  }
+  .section-title {
+    @apply text-sm font-bold text-govNavy-900;
+  }
+  .section-sub {
+    @apply text-xs text-slate-500 mt-0.5;
+  }
+
+  /* Forms */
+  .input {
+    @apply w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent;
+  }
+  .select {
+    @apply bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-600;
+  }
+  .field-label {
+    @apply text-xs font-semibold text-slate-600;
+  }
+
+  /* Buttons */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 bg-gradient-to-b from-govNavy-800 to-govNavy-900 hover:from-govNavy-700 hover:to-govNavy-800 text-white font-semibold px-5 py-2.5 rounded-lg text-sm shadow-soft transition-all disabled:opacity-50 active:translate-y-px;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs px-3 py-1.5 rounded-lg shadow-sm font-medium transition-colors;
+  }
+  .btn-accent {
+    @apply inline-flex items-center justify-center gap-1.5 bg-govSaffron-500 hover:bg-govSaffron-600 text-govNavy-950 font-semibold px-4 py-2 rounded-lg text-sm shadow-soft transition-colors disabled:opacity-50;
+  }
+
+  /* Data tables */
+  .table-wrap {
+    @apply overflow-auto border border-slate-100 rounded-lg scroll-slim;
+  }
+  .th {
+    @apply py-2.5 px-3 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500 bg-slate-50 whitespace-nowrap;
+  }
+  .td {
+    @apply py-2.5 px-3 text-xs text-slate-700;
+  }
+
+  /* Inline helpers */
+  .mono-chip {
+    @apply font-mono font-bold text-govNavy-900;
+  }
+  .link {
+    @apply font-medium text-blue-700 hover:text-blue-900 hover:underline underline-offset-2;
+  }
+  .kbd {
+    @apply rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-slate-500;
+  }
+  .divider {
+    @apply border-t border-slate-100;
+  }
+  .hero-grid {
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+    background-size: 28px 28px;
+    mask-image: radial-gradient(ellipse 90% 100% at 50% 0%, black 55%, transparent 100%);
+  }
+  .alert-error {
+    @apply bg-red-50 border border-red-300 text-red-900 p-4 rounded-xl text-sm;
+  }
+  .loading-box {
+    @apply bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-500 text-sm gap-2;
+  }
+}
+
+/* Status Badges */
+.badge-current {
+  background-color: #dcfce7;
+  color: #15803d;
+  border: 1px solid #86efac;
+}
+
+.badge-superseded,
+.badge-withdrawn {
+  background-color: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+}
+
+.badge-revision {
+  background-color: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fde68a;
+}
