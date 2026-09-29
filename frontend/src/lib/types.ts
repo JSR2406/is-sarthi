@@ -189,6 +189,7 @@ export interface GraphNode {
   title: string;
   status: string;
   division: string;
+  tier?: 'enriched' | 'catalogue' | string;
   is_target: boolean;
 }
 
@@ -196,6 +197,7 @@ export interface GraphEdge {
   source: string;
   target: string;
   role: string;
+  kind?: 'normative' | 'cited_by' | 'similar' | string;
 }
 
 export interface GraphResponse {

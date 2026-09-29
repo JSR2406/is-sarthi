@@ -617,6 +617,68 @@ function StandardDetailContent() {
         </dl>
       </div>
 
+      {/* Record completeness & known gaps */}
+      <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-2">
+        <h4 className="text-sm font-bold text-govNavy-900 flex items-center gap-2 border-b border-slate-100 pb-2">
+          <Info className="w-4 h-4 text-blue-600" />
+          <span>Record Completeness</span>
+        </h4>
+        {(() => {
+          const gaps: { ok: boolean; text: string }[] = [
+            {
+              ok: !!standard.scope,
+              text: standard.scope
+                ? 'Technical scope is published for this record.'
+                : 'No scope text published for this tier — summaries and semantic matching fall back to title and catalogue metadata.',
+            },
+            {
+              ok: totalAlliedCount > 0 || citedCount > 0,
+              text: totalAlliedCount > 0 || citedCount > 0
+                ? `Connected: ${totalAlliedCount} allied outgoing, ${citedCount} citing incoming.`
+                : 'No normative references mapped — the graph explorer shows same-division similar records instead (labeled, never normative).',
+            },
+            {
+              ok: !!(standard.certification && standard.certification.scheme),
+              text: standard.certification && standard.certification.scheme
+                ? `Certification regime on record: ${standard.certification.scheme_label || standard.certification.scheme}.`
+                : 'No certification scheme on record — treat tender certification clauses as unverified for this standard.',
+            },
+            {
+              ok: status === 'current',
+              text: status === 'current'
+                ? 'Status is current in the unified corpus.'
+                : `Status is ${status} — verify the successor before citing. See the timeline above.`,
+            },
+          ];
+          const okCount = gaps.filter((g) => g.ok).length;
+          return (
+            <>
+              <div className="flex items-center gap-2 text-xs">
+                <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className={`h-full rounded-full ${okCount === gaps.length ? 'bg-emerald-500' : okCount >= 2 ? 'bg-amber-500' : 'bg-red-500'}`}
+                    style={{ width: `${(okCount / gaps.length) * 100}%` }}
+                  />
+                </div>
+                <span className="font-bold tabular-nums text-slate-700">{okCount}/{gaps.length}</span>
+              </div>
+              <ul className="space-y-1.5">
+                {gaps.map((g, i) => (
+                  <li key={i} className="flex gap-2 text-xs leading-relaxed">
+                    {g.ok ? (
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden />
+                    ) : (
+                      <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" aria-hidden />
+                    )}
+                    <span className="text-slate-600">{g.text}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          );
+        })()}
+      </div>
+
       {/* Impact analysis: cited by */}
       <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-3">
         <h4 className="text-sm font-bold text-govNavy-900 flex items-center gap-2 border-b border-slate-100 pb-2">

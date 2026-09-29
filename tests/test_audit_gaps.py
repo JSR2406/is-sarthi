@@ -102,3 +102,35 @@ class TestNewSurfaces:
         assert "completeness" in types_src and "ReverseRefsResponse" in types_src
         assert "getWatchlist" in _read(LIB / "watchlist.ts")
         assert "saveCorrection" in _read(LIB / "corrections.ts")
+
+
+class TestGraphGenerator:
+    """Catalogue-only dossiers get honest fallback edges, never fake citations."""
+
+    def test_lonely_catalogue_record_gets_graph(self, api):
+        graph = api.resolve_standard_graph("IS 11396:1985", depth=1)
+        assert len(graph["nodes"]) > 1 and len(graph["edges"]) > 0
+        kinds = {e.get("kind") for e in graph["edges"]}
+        assert kinds <= {"similar", "cited_by"}, f"unexpected kinds: {kinds}"
+        for edge in graph["edges"]:
+            assert edge["role"] in ("Similar record", "Cited by"), \
+                f"fabricated normative role: {edge['role']}"
+
+    def test_tier1_normative_untouched(self, api):
+        graph = api.resolve_standard_graph("IS 1554-1", depth=1)
+        assert len(graph["edges"]) > 0
+        assert {e.get("kind") for e in graph["edges"]} == {"normative"}
+
+    def test_target_carries_tier(self, api):
+        target = api.resolve_standard_graph("IS 11396:1985")["nodes"][0]
+        assert target["tier"] == "catalogue" and target["is_target"] is True
+        target = api.resolve_standard_graph("IS 1554-1")["nodes"][0]
+        assert target["tier"] == "enriched"
+
+    def test_graph_ui_marks_fallbacks(self):
+        src = _read(APP / "graph" / "page.tsx")
+        assert "not normative" in src and "Cited by" in src
+
+    def test_dossier_completeness_panel(self):
+        src = list(APP.glob("standards/**/page.tsx"))[0].read_text(encoding="utf-8")
+        assert "Record Completeness" in src

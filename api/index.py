@@ -388,6 +388,82 @@ def resolve_standard_detail(is_number: str) -> dict:
     return enriched
 
 
+def _fallback_graph(hc, record: dict, target_num: str,
+                    need: int = 6) -> tuple[list, list]:
+    """Honest fallback edges when no normative references are mapped.
+
+    Two grounded sources only, each labeled so the UI can never mistake them
+    for normative citations:
+    - cited_by: Tier-1 standards whose reference lists include the target.
+    - similar: same-division catalogue siblings ranked by aspect + title overlap.
+    """
+    import re as _re
+
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    seen = {target_num}
+
+    def _node(num: str, rec: dict) -> dict:
+        return {
+            "id": num,
+            "label": num,
+            "title": rec.get("title", ""),
+            "status": rec.get("status", "current"),
+            "division": rec.get("division") or rec.get("department") or "BIS",
+            "tier": rec.get("tier", "catalogue"),
+            "is_target": False,
+        }
+
+    # 1. Reverse normative edges: who cites the target.
+    graph = getattr(hc, "graph", {}) or {}
+    for src, refs in graph.items():
+        for ref in refs or []:
+            target = ref.get("is_number", "")
+            if target == target_num or (
+                target and normalize_is_number(target) == normalize_is_number(target_num)
+            ):
+                rec = hc.adapter.get_by_number(src) or {}
+                nodes.append(_node(src, rec))
+                edges.append({
+                    "source": src,
+                    "target": target_num,
+                    "role": "Cited by",
+                    "kind": "cited_by",
+                })
+                seen.add(src)
+                break
+        if len(edges) >= need:
+            break
+
+    # 2. Catalogue similarity fill (never labeled normative).
+    if len(edges) < need:
+        div = record.get("division") or record.get("department")
+        aspect = (record.get("aspect") or "").strip().lower()
+        title_tokens = set(_re.findall(r"[a-z]{4,}", (record.get("title") or "").lower()))
+        scored: list[tuple] = []
+        for r in hc.adapter.records:
+            num = r.get("is_number")
+            if not num or num in seen:
+                continue
+            if div and (r.get("division") or r.get("department")) != div:
+                continue
+            overlap = len(title_tokens & set(_re.findall(r"[a-z]{4,}", (r.get("title") or "").lower())))
+            bonus = 3 if aspect and (r.get("aspect") or "").strip().lower() == aspect else 0
+            scored.append((bonus + overlap, num))
+        scored.sort(reverse=True)
+        for _, num in scored[: max(need - len(edges), 0)]:
+            rec = hc.adapter.get_by_number(num) or {}
+            nodes.append(_node(num, rec))
+            edges.append({
+                "source": target_num,
+                "target": num,
+                "role": "Similar record",
+                "kind": "similar",
+            })
+            seen.add(num)
+    return nodes, edges
+
+
 def resolve_standard_graph(is_number: str, depth: int = 1) -> dict:
     canonical = normalize_is_number(is_number) or is_number
     record = corpus.by_number.get(is_number) or corpus.by_number.get(canonical)
@@ -407,6 +483,10 @@ def resolve_standard_graph(is_number: str, depth: int = 1) -> dict:
             raise HTTPException(status_code=404, detail=f"Standard '{is_number}' not found.")
 
         target_num = record.get("is_number", canonical)
+        # Catalogue record: no mapped normative refs — generate honest fallbacks
+        # (cited-by + labeled similarity) instead of a lonely node.
+        hc = get_hybrid_corpus()
+        extra_nodes, extra_edges = _fallback_graph(hc, record, target_num)
         return {
             "target": target_num,
             "nodes": [
@@ -416,10 +496,11 @@ def resolve_standard_graph(is_number: str, depth: int = 1) -> dict:
                     "title": record.get("title", ""),
                     "status": record.get("status", "current"),
                     "division": record.get("division") or record.get("department") or "BIS",
+                    "tier": record.get("tier", "catalogue"),
                     "is_target": True,
                 }
-            ],
-            "edges": [],
+            ] + extra_nodes,
+            "edges": extra_edges,
         }
 
     nodes = []
@@ -432,6 +513,7 @@ def resolve_standard_graph(is_number: str, depth: int = 1) -> dict:
         "title": record.get("title", ""),
         "status": record.get("status", "current"),
         "division": record.get("division", "ETD"),
+        "tier": "enriched",
         "is_target": True,
     })
 
@@ -448,6 +530,7 @@ def resolve_standard_graph(is_number: str, depth: int = 1) -> dict:
                 "source": current,
                 "target": child,
                 "role": role,
+                "kind": "normative",
             })
 
             if child not in visited:
@@ -458,10 +541,19 @@ def resolve_standard_graph(is_number: str, depth: int = 1) -> dict:
                     "title": child_rec.get("title") or ref.get("title", ""),
                     "status": child_rec.get("status", "current"),
                     "division": child_rec.get("division", "ETD"),
+                    "tier": "enriched",
                     "is_target": False,
                 })
                 visited.add(child)
                 frontier.append((child, hop + 1))
+
+    if not edges:
+        # Enriched record with no mapped refs — same honest fallback.
+        hc = get_hybrid_corpus()
+        adapter_rec = hc.adapter.get_by_number(canonical) or record
+        extra_nodes, extra_edges = _fallback_graph(hc, adapter_rec, canonical)
+        nodes += extra_nodes
+        edges += extra_edges
 
     return {"target": canonical, "nodes": nodes, "edges": edges}
 

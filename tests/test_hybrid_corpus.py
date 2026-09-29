@@ -314,12 +314,15 @@ def test_api_hybrid_detail_and_graph():
     assert "Standard Conformity" in d2["tender_clause"]
     assert d2["allied_by_role"] == {}
 
-    # Tier 2 graph
+    # Tier 2 graph: no mapped normative refs, so the generator must supply
+    # honest fallbacks (cited-by + labeled similarity) instead of a lonely node.
     res_g2 = client.get("/api/standards/IS%209973/graph")
     assert res_g2.status_code == 200
     g2 = res_g2.json()
-    assert len(g2["nodes"]) == 1
-    assert len(g2["edges"]) == 0
+    assert len(g2["nodes"]) > 1
+    assert len(g2["edges"]) > 0
+    assert {e.get("kind") for e in g2["edges"]} <= {"similar", "cited_by"}
+    assert g2["nodes"][0].get("tier") == "catalogue"
 
     # Non-existent standard
     res_404 = client.get("/api/standards/IS%20999999")

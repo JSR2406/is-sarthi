@@ -166,7 +166,7 @@ function GraphContent() {
             </h3>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {otherNodes.length > 0 ? (
+            {(targetNode.tier === 'enriched' || (targetNode.tier === undefined && otherNodes.length > 0)) ? (
               <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-800 border border-blue-200 px-2.5 py-1 rounded text-xs font-semibold">
                 <Sparkles className="w-3.5 h-3.5 text-blue-600" />
                 <span>Seed Enriched Dossier</span>
@@ -210,7 +210,7 @@ function GraphContent() {
           <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-4 shadow-sm min-h-[420px] flex flex-col justify-between">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-4 text-xs text-slate-500 font-medium">
               <span>🕸️ Network Diagram ({graphData.nodes.length} nodes, {graphData.edges.length} edges)</span>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className="flex items-center gap-1">
                   <span className="w-2.5 h-2.5 bg-blue-700 rounded-full"></span> Target
                 </span>
@@ -222,6 +222,12 @@ function GraphContent() {
                 </span>
                 <span className="flex items-center gap-1">
                   <span className="w-2.5 h-2.5 bg-red-500 rounded-full"></span> Superseded
+                </span>
+                <span className="flex items-center gap-1" title="Same-division catalogue neighbours — not normative citations">
+                  <span className="w-2.5 h-2.5 rounded-full border-2 border-dashed border-slate-400 bg-white"></span> Similar
+                </span>
+                <span className="flex items-center gap-1" title="Standards whose reference lists cite the target">
+                  <span className="w-2.5 h-2.5 bg-violet-500 rounded-full"></span> Cited by
                 </span>
               </div>
             </div>
@@ -257,6 +263,8 @@ function GraphContent() {
                   const radius = 130;
                   const cx = 300 + radius * Math.cos(angle);
                   const cy = 180 + radius * Math.sin(angle);
+                  const nodeEdge = graphData.edges.find((e) => e.target === node.id || e.source === node.id);
+                  const nodeKind = nodeEdge?.kind || 'normative';
 
                   return (
                     <g
@@ -271,11 +279,14 @@ function GraphContent() {
                         y2={cy}
                         className="stroke-slate-300 stroke-1 stroke-dashed"
                       />
+                      {nodeKind === 'similar' && (
+                        <circle cx={cx} cy={cy} r="27" fill="none" strokeWidth="1.5" strokeDasharray="4 3" className="stroke-slate-400" />
+                      )}
                       <circle
                         cx={cx}
                         cy={cy}
                         r="22"
-                        className={`${statusDot(node.status)} stroke-2 transition-transform duration-200 group-hover:scale-110`}
+                        className={`${nodeKind === 'cited_by' ? 'fill-violet-500 stroke-violet-700' : statusDot(node.status)} stroke-2 transition-transform duration-200 group-hover:scale-110`}
                       />
                       <text
                         x={cx}
@@ -344,10 +355,27 @@ function GraphContent() {
                         >
                           {node.id}
                         </button>
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-[10px] bg-blue-50 text-blue-800 px-1.5 py-0.5 rounded font-sans font-medium">
                             {edge?.role || 'Normative'}
                           </span>
+                          {edge?.kind === 'similar' && (
+                            <span
+                              title="Same-division catalogue neighbour — similarity, not a normative citation"
+                              className="text-[10px] bg-slate-100 text-slate-600 border border-dashed border-slate-300 px-1.5 py-0.5 rounded font-sans font-medium"
+                            >
+                              similar · not normative
+                            </span>
+                          )}
+                          {edge?.kind === 'cited_by' && (
+                            <span
+                              title="This standard cites the target in its own reference list"
+                              className="text-[10px] bg-violet-50 text-violet-700 px-1.5 py-0.5 rounded font-sans font-medium"
+                            >
+                              cites target
+                            </span>
+                          )}
+                          {(!edge?.kind || edge.kind === 'normative') && (
                           <span
                             title={isDirect ? 'Cited directly by the target standard' : 'Reached transitively via another cited standard'}
                             className={`text-[10px] px-1.5 py-0.5 rounded font-sans font-medium ${
@@ -358,6 +386,7 @@ function GraphContent() {
                           >
                             {isDirect ? 'direct' : 'transitive'}
                           </span>
+                          )}
                           <Link
                             href={getStandardDetailUrl(node.id)}
                             className="text-slate-400 hover:text-blue-600"
@@ -371,9 +400,15 @@ function GraphContent() {
                         {node.title}
                       </div>
                       <p className="mt-1 text-[11px] leading-snug text-slate-500">
-                        Cited by {edge && edge.source === graphData.target ? 'the target standard' : edge?.source || 'the target standard'} as{' '}
-                        <strong className="font-semibold text-slate-700">{edge?.role || 'a normative reference'}</strong>
-                        {' '}({isDirect ? 'direct citation' : 'transitive via another cited standard'}).
+                        {edge?.kind === 'similar' ? (
+                          <>Catalogue similarity — shares division metadata with the target, <strong className="font-semibold text-slate-700">not a normative citation</strong>.</>
+                        ) : edge?.kind === 'cited_by' ? (
+                          <><strong className="font-semibold text-slate-700">{node.id}</strong> cites the target standard in its own reference list.</>
+                        ) : (
+                          <>Cited by {edge && edge.source === graphData.target ? 'the target standard' : edge?.source || 'the target standard'} as{' '}
+                          <strong className="font-semibold text-slate-700">{edge?.role || 'a normative reference'}</strong>
+                          {' '}({isDirect ? 'direct citation' : 'transitive via another cited standard'}).</>
+                        )}
                       </p>
                       <div className="mt-1 flex items-center justify-between text-[10px] text-slate-400">
                         <span>Division: {node.division}</span>
