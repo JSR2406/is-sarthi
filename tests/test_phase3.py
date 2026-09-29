@@ -37,11 +37,13 @@ class TestRouteCoverage:
     def test_dynamic_dossier_route_intact(self):
         matches = list(APP.glob("standards/**/page.tsx"))
         assert matches, "dynamic /standards dossier route missing"
-        # Concrete routes (query + path param) — optional catch-alls 404 on
-        # some static hosts, so both forms must exist as real files.
+        # Canonical dossier URL is the query form (/standards?is_number=…):
+        # path-segment dynamic routes 404 under the legacy hosting rewrite,
+        # so the query page is the single supported entry point.
         assert (APP / "standards" / "page.tsx").exists()
-        assert (APP / "standards" / "[is_number]" / "page.tsx").exists()
+        assert not (APP / "standards" / "[is_number]").exists()
         assert (COMP / "StandardDossier.tsx").exists()
+        assert (APP / "not-found.tsx").exists()
 
     def test_every_page_has_default_export(self):
         for route in STABLE_ROUTES + NEW_ROUTES:
