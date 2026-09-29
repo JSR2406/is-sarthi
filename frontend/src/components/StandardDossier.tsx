@@ -1,8 +1,7 @@
 'use client';
 
-import React, { useEffect, useState, Suspense } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useParams, useSearchParams } from 'next/navigation';
 import {
   ArrowLeft,
   Building2,
@@ -34,33 +33,7 @@ import { toggleWatch, isWatched } from '@/lib/watchlist';
 import { saveCorrection } from '@/lib/corrections';
 import { StandardDetail, CitedByEntry } from '@/lib/types';
 
-function safeDecode(str: string): string {
-  try {
-    return decodeURIComponent(str);
-  } catch {
-    return str;
-  }
-}
-
-function StandardDetailContent() {
-  const params = useParams();
-  const searchParams = useSearchParams();
-
-  // Robust extraction: prioritize query parameter (?is_number=...) then fallback to path param
-  let raw = searchParams
-    ? (searchParams.get('is_number') || searchParams.get('id') || searchParams.get('standard') || '')
-    : '';
-
-  if (!raw) {
-    const paramVal = params?.is_number;
-    if (Array.isArray(paramVal)) {
-      raw = paramVal.join('/');
-    } else if (typeof paramVal === 'string') {
-      raw = paramVal;
-    }
-  }
-
-  const isNumber = raw ? safeDecode(raw).trim() : '';
+export default function StandardDossier({ isNumber }: { isNumber: string }) {
 
   const [standard, setStandard] = useState<StandardDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -776,20 +749,5 @@ function StandardDetailContent() {
         </div>
       )}
     </div>
-  );
-}
-
-export default function StandardDetailPage() {
-  return (
-    <Suspense
-      fallback={
-        <div className="min-h-[360px] bg-white border border-slate-200 rounded-xl p-8 flex flex-col items-center justify-center text-slate-500 gap-3">
-          <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-          <p className="text-sm font-medium">Resolving standard details across unified BIS corpus...</p>
-        </div>
-      }
-    >
-      <StandardDetailContent />
-    </Suspense>
   );
 }

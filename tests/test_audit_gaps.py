@@ -78,7 +78,7 @@ class TestGracefulDegradation:
 
 class TestNewSurfaces:
     def test_dossier_panels(self):
-        src = list(APP.glob("standards/**/page.tsx"))[0].read_text(encoding="utf-8")
+        src = _read(BASE / "frontend" / "src" / "components" / "StandardDossier.tsx")
         for marker in ("Version Timeline", "Source Traceability", "Cited By",
                        "Suggest a Correction", "Watch"):
             assert marker in src, f"dossier missing: {marker}"
@@ -132,5 +132,5 @@ class TestGraphGenerator:
         assert "not normative" in src and "Cited by" in src
 
     def test_dossier_completeness_panel(self):
-        src = list(APP.glob("standards/**/page.tsx"))[0].read_text(encoding="utf-8")
+        src = _read(BASE / "frontend" / "src" / "components" / "StandardDossier.tsx")
         assert "Record Completeness" in src

@@ -177,7 +177,7 @@ class TestPremiumSpec:
         assert "Low-confidence answer" in src and "Source citations" in src
 
     def test_dossier_compare_and_export(self):
-        src = list(APP.glob("standards/**/page.tsx"))[0].read_text(encoding="utf-8")
+        src = _read(COMP / "StandardDossier.tsx")
         assert "/compare?ids=" in src and "exportJson" in src and "exportMarkdown" in src
 
     def test_sidebar_matches_premium_nav(self):
