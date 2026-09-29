@@ -29,6 +29,7 @@ from pipeline.classify import ROLE_LABELS, classify_all
 from pipeline.utils.normalize import (
     canonical_is_key,
     extract_all_is_references,
+    get_standard_family,
     is_equivalent_designation,
     normalize_is_number,
     split_number_and_year,
@@ -565,7 +566,7 @@ class HybridCorpus:
         Resolves both Tier 1 and Tier 2 standards using canonical matching.
         """
         cited = extract_all_is_references(spec_text)
-        issues, suggestions = [], []
+        issues, suggestions, suggested_additions = [], [], []
 
         for is_number in cited:
             record = self.adapter.get_by_number(is_number)
@@ -575,9 +576,27 @@ class HybridCorpus:
                         "is_number": is_number,
                         "severity": "info",
                         "issue": "Not found in unified corpus",
-                        "action": "Verify on the BIS portal.",
+                        "action": ("Verify on the BIS portal (bis.gov.in → Know Your Standards). "
+                                   "Check the exact year/part — catalogue coverage is complete for "
+                                   "numbers but thin for rare parts and very recent revisions."),
                     }
                 )
+                # Beyond-corpus help: same-family records that DO exist, clearly
+                # labeled as neighbours to verify — never as replacements.
+                family = get_standard_family(is_number)
+                if family:
+                    for cand in self.records:
+                        if len([s for s in suggested_additions
+                                if s.get("referenced_by") == is_number]) >= 3:
+                            break
+                        if (get_standard_family(cand.get("is_number")) == family
+                                and cand.get("is_number") not in cited):
+                            suggested_additions.append({
+                                "is_number": cand["is_number"],
+                                "title": cand.get("title"),
+                                "role": "Same family — verify applicability",
+                                "referenced_by": is_number,
+                            })
                 continue
 
             status = record.get("status", "current")
@@ -633,7 +652,6 @@ class HybridCorpus:
                 }
             )
 
-        suggested_additions = []
         for is_num in cited:
             rec = self.adapter.get_by_number(is_num)
             if rec and rec.get("tier") == "enriched":

@@ -790,7 +790,82 @@ def list_review_queue(status: str = "pending", limit: int = 50):
                 "notice": "Review store unavailable."}
 
 
-def build_assistant_answer(result: dict, max_cites: int = 3) -> dict:
+BIS_PORTAL = "https://www.bis.gov.in"
+
+# Stable regulatory facts (scheme regimes change rarely; each line is labeled
+# as general information, never as a corpus citation).
+SCHEME_GUIDE = {
+    "isi": ("ISI mark (Scheme-I): BIS product certification under the BIS "
+            "(Conformity Assessment) Regulations, 2018. The manufacturer holds a "
+            "CM/L licence; Quality Control Orders make it mandatory for notified products."),
+    "crs": ("CRS (Scheme-II): BIS Compulsory Registration for electronics and IT goods. "
+            "The manufacturer obtains an R-number and affixes the Self Declaration of "
+            "Conformity; many product categories fall under standing QCOs."),
+    "hallmark": ("BIS Hallmarking: mandatory for gold and silver jewellery/artefacts, "
+                 "identified by the 6-digit alphanumeric HUID plus fineness grade."),
+    "qco": ("Quality Control Orders are ministry-issued orders (published in the "
+            "e-Gazette) that make BIS certification mandatory for a product. Always "
+            "confirm the latest QCO for the exact product category before tendering."),
+}
+
+
+def _scheme_explainer(message: str) -> list[str]:
+    lowered = (message or "").lower()
+    out = []
+    if "isi" in lowered or "isi mark" in lowered:
+        out.append(SCHEME_GUIDE["isi"])
+    if "crs" in lowered or "compulsory registration" in lowered or "r-number" in lowered:
+        out.append(SCHEME_GUIDE["crs"])
+    if "hallmark" in lowered or "huid" in lowered or "gold" in lowered:
+        out.append(SCHEME_GUIDE["hallmark"])
+    if "qco" in lowered or "quality control order" in lowered or "mandatory" in lowered:
+        out.append(SCHEME_GUIDE["qco"])
+    return out
+
+
+def _ref_status_lines(message: str, corpus) -> tuple[list[str], list[dict]]:
+    """Per-reference corpus status for IS numbers named in a message.
+
+    Returns (answer lines, citation entries). Unknown numbers get portal
+    guidance — never invented metadata.
+    """
+    lines, citations = [], []
+    try:
+        refs = extract_all_is_references(message or "")
+    except Exception:
+        refs = []
+    for ref in refs[:5]:
+        record = None
+        try:
+            record = corpus.adapter.get_by_number(ref) if corpus else None
+        except Exception:
+            record = None
+        if record:
+            status = record.get("status", "current")
+            line = (f"**{ref}** is in this corpus ({record.get('title', '')[:80]}). "
+                    f"Status: {status}.")
+            if status in ("withdrawn", "superseded"):
+                successor = record.get("superseded_by")
+                line += f" Do not cite in new tenders" + (f" — successor: {successor}." if successor else ".")
+            lines.append(line)
+            citations.append({
+                "is_number": ref,
+                "title": record.get("title"),
+                "tier": record.get("tier"),
+                "status": status,
+                "confidence": None,
+                "band": status,
+            })
+        else:
+            lines.append(
+                f"**{ref}** is not in this {len(corpus.adapter.records) if corpus else 0:,}-record "
+                f"corpus snapshot. Verify it on the BIS portal ({BIS_PORTAL} → Know Your Standards), "
+                f"checking the exact year and part — then ask me to validate the full tender text.")
+    return lines, citations
+
+
+def build_assistant_answer(result: dict, max_cites: int = 3, message: str = "",
+                           corpus=None) -> dict:
     """Grounded answer builder for the Standards Assistant (Manak-AI style).
 
     Pure function over a HybridCorpus.recommend() result — no LLM, no invented
@@ -799,16 +874,23 @@ def build_assistant_answer(result: dict, max_cites: int = 3) -> dict:
     """
     state = result.get("state", "error")
     recs = result.get("recommendations", [])[:max_cites]
+    scheme_notes = _scheme_explainer(message)
 
     if state != "ok" or not recs:
+        ref_lines, ref_cites = _ref_status_lines(message, corpus)
+        parts = [
+            "I could not find a confident match in the BIS corpus for that. "
+            "Add material, rating, dimensions, or intended application "
+            "(e.g. '3-core armoured copper cable, 1100V, underground laying') "
+            "and ask again."
+        ]
+        parts.extend(ref_lines)
+        if scheme_notes:
+            parts.append("General regulatory information (not a corpus citation): "
+                         + " ".join(scheme_notes))
         return {
-            "answer": (
-                "I could not find a confident match in the BIS corpus for that. "
-                "Add material, rating, dimensions, or intended application "
-                "(e.g. '3-core armoured copper cable, 1100V, underground laying') "
-                "and ask again."
-            ),
-            "citations": [],
+            "answer": "\n\n".join(parts),
+            "citations": ref_cites,
             "suggested_followups": [
                 "What components or materials are involved?",
                 "What voltage / rating / grade applies?",
@@ -838,6 +920,9 @@ def build_assistant_answer(result: dict, max_cites: int = 3) -> dict:
     if len(recs) > 1:
         others = ", ".join(r.get("is_number", "") for r in recs[1:])
         lines.append(f"Also relevant: {others}. Open a citation for its dossier.")
+    if scheme_notes:
+        lines.append("General regulatory information (not a corpus citation): "
+                     + " ".join(scheme_notes))
 
     citations = [
         {
@@ -876,7 +961,7 @@ def assistant_chat(req: AssistantChatRequest):
         if not r.get("tender_clause"):
             r["tender_clause"] = generate_tender_clause(r)
 
-    grounded = build_assistant_answer(result)
+    grounded = build_assistant_answer(result, message=message, corpus=hc)
     logger.info("Assistant chat: %s -> %s (%s)", orig_q[:80], result.get("state"),
                 detected_lang)
     return {
