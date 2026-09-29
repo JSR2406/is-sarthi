@@ -16,6 +16,10 @@
       "dest": "api/index.py"
     },
     {
+      "src": "/standards/(.+)",
+      "dest": "/standards?is_number=$1"
+    },
+    {
       "src": "/(.*)",
       "dest": "frontend/$1"
     }
