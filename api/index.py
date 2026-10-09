@@ -30,6 +30,13 @@ from pipeline.scrapers.doc_extractor import extract_document_text
 from pipeline.scrapers.pdf_extractor import extract_text_from_pdf
 from pipeline.utils.multilingual import normalize_query_for_retrieval
 from pipeline.procurement.service import ProcurementService
+from api.services.web_search import (
+    format_web_section,
+    is_web_search_enabled,
+    should_use_web_search,
+    tavily_search,
+)
+from api.services.memory import memory_summary, resolve_followup
 from ui import speech_service
 
 logging.basicConfig(level=logging.INFO)
@@ -227,6 +234,11 @@ class AssistantChatRequest(BaseModel):
     message: str = Field(..., min_length=2, max_length=2000)
     history: List[Dict[str, str]] = Field(default_factory=list)
     top_k: int = Field(5, ge=1, le=10)
+    use_web: Optional[bool] = Field(
+        None,
+        description="Force Tavily web search on (true) / off (false). "
+        "Null = auto: web is used on low corpus confidence or real-time intent.",
+    )
 
 
 class SummarizeRequest(BaseModel):
@@ -243,6 +255,7 @@ def health_check():
         "status": "ok",
         "standards_indexed": len(corpus.records),
         "voice_enabled": speech_service.is_voice_enabled(),
+        "web_search_enabled": is_web_search_enabled(),
     }
 
 
@@ -865,16 +878,26 @@ def _ref_status_lines(message: str, corpus) -> tuple[list[str], list[dict]]:
 
 
 def build_assistant_answer(result: dict, max_cites: int = 3, message: str = "",
-                           corpus=None) -> dict:
+                           corpus=None, web: Optional[dict] = None,
+                           memory: Optional[list] = None) -> dict:
     """Grounded answer builder for the Standards Assistant (Manak-AI style).
 
     Pure function over a HybridCorpus.recommend() result — no LLM, no invented
     relations. Every claim cites a retrieved recommendation field. Testable
     without a running server (see tests/test_assistant.py).
+
+    `web` is an optional Tavily result dict (see api/services/web_search.py).
+    Web content is appended as a clearly-labelled section with its own
+    `web_sources` list — never merged into BIS `citations`.
+
+    `memory` is the trimmed conversation transcript (api/services/memory.py).
+    When present and the current turn is a follow-up, answers reference the
+    carried context explicitly so multi-turn sessions read coherently.
     """
     state = result.get("state", "error")
     recs = result.get("recommendations", [])[:max_cites]
     scheme_notes = _scheme_explainer(message)
+    prior_context = _memory_context_line(message, memory)
 
     if state != "ok" or not recs:
         ref_lines, ref_cites = _ref_status_lines(message, corpus)
@@ -884,13 +907,21 @@ def build_assistant_answer(result: dict, max_cites: int = 3, message: str = "",
             "(e.g. '3-core armoured copper cable, 1100V, underground laying') "
             "and ask again."
         ]
+        if prior_context:
+            parts.append(prior_context)
         parts.extend(ref_lines)
         if scheme_notes:
             parts.append("General regulatory information (not a corpus citation): "
                          + " ".join(scheme_notes))
+        web_sources = _web_sources(web)
+        web_section = format_web_section(web) if web_sources or (web or {}).get("answer") else ""
+        if web_section:
+            parts.append(web_section)
         return {
             "answer": "\n\n".join(parts),
             "citations": ref_cites,
+            "web_sources": web_sources,
+            "web_used": bool(web_section),
             "suggested_followups": [
                 "What components or materials are involved?",
                 "What voltage / rating / grade applies?",
@@ -923,6 +954,8 @@ def build_assistant_answer(result: dict, max_cites: int = 3, message: str = "",
     if scheme_notes:
         lines.append("General regulatory information (not a corpus citation): "
                      + " ".join(scheme_notes))
+    if prior_context:
+        lines.append(prior_context)
 
     citations = [
         {
@@ -935,9 +968,15 @@ def build_assistant_answer(result: dict, max_cites: int = 3, message: str = "",
         }
         for r in recs
     ]
+    web_sources = _web_sources(web)
+    web_section = format_web_section(web) if web_sources or (web or {}).get("answer") else ""
+    if web_section:
+        lines.append(web_section)
     return {
         "answer": "\n\n".join(lines),
         "citations": citations,
+        "web_sources": web_sources,
+        "web_used": bool(web_section),
         "suggested_followups": [
             f"What tests apply under {top.get('is_number')}?",
             f"Is {top.get('is_number')} mandatory for this procurement?",
@@ -946,13 +985,70 @@ def build_assistant_answer(result: dict, max_cites: int = 3, message: str = "",
     }
 
 
+def _web_sources(web: Optional[dict]) -> list[dict]:
+    """Normalise a Tavily result into serialisable web-source entries."""
+    if not web or not web.get("results"):
+        return []
+    out = []
+    for item in web["results"][:5]:
+        out.append(
+            {
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "snippet": (item.get("snippet") or "")[:500],
+                "score": item.get("score", 0.0),
+                "published_date": item.get("published_date"),
+            }
+        )
+    return out
+
+
+def _memory_context_line(message: str, memory: Optional[list]) -> str:
+    """One honest line naming the carried-over context when a turn is a follow-up.
+
+    Pure and conservative: only fires on actual follow-up resolution (the
+    message alone was too thin to retrieve against), so standalone answers
+    are never cluttered with memory boilerplate.
+    """
+    if not memory:
+        return ""
+    prior_user = next(
+        (t["content"] for t in reversed(memory) if t.get("role") == "user"), ""
+    )
+    if not prior_user:
+        return ""
+    # Only label as follow-up when this turn needed prior context to resolve.
+    from api.services.memory import is_followup
+
+    if not is_followup(message, memory):
+        return ""
+    snippet = prior_user if len(prior_user) <= 140 else prior_user[:137] + "…"
+    return (
+        f"Continuing from your earlier question (\"{snippet}\") — "
+        "answering in that context."
+    )
+
+
 @app.post("/api/assistant/chat")
 def assistant_chat(req: AssistantChatRequest):
-    """Manak-AI style grounded chat: retrieval first, templated answer, always cited."""
+    """Manak-AI style grounded chat: retrieval first, templated answer, always cited.
+
+    Corpus retrieval is authoritative for BIS standards. Tavily web search is an
+    opt-in/auto supplementary tool for real-time context (QCO updates, amendments,
+    prices, news): it never overrides corpus citations and degrades to
+    corpus-only when unconfigured or on failure.
+
+    Conversation memory: follow-up turns ("and its amendments?") are resolved
+    against the prior history into a standalone retrieval query before search,
+    and the trimmed transcript is passed to the answer builder for context.
+    """
     message = req.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="Message is empty.")
-    normalized_q, detected_lang, orig_q = normalize_query_for_retrieval(message)
+
+    memory = memory_summary(req.history)
+    resolved_q, was_followup = resolve_followup(message, req.history)
+    normalized_q, detected_lang, _orig = normalize_query_for_retrieval(resolved_q)
 
     hc = get_hybrid_corpus()
     result = hc.recommend(normalized_q, top_k=req.top_k)
@@ -961,16 +1057,41 @@ def assistant_chat(req: AssistantChatRequest):
         if not r.get("tender_clause"):
             r["tender_clause"] = generate_tender_clause(r)
 
-    grounded = build_assistant_answer(result, message=message, corpus=hc)
-    logger.info("Assistant chat: %s -> %s (%s)", orig_q[:80], result.get("state"),
-                detected_lang)
+    # --- Tavily web-search tool (supplementary, fail-closed to corpus-only) ---
+    web: Optional[dict] = None
+    web_used = False
+    try:
+        top_conf = float((recs[0].get("confidence") if recs else 0.0) or 0.0)
+    except (TypeError, ValueError):
+        top_conf = 0.0
+    if should_use_web_search(
+        resolved_q,
+        corpus_state=result.get("state", "error"),
+        top_confidence=top_conf,
+        explicit_flag=req.use_web,
+    ):
+        web = tavily_search(resolved_q)
+        web_used = bool(web.get("enabled"))
+        if not web_used:
+            logger.info("Assistant web search skipped/disabled: %s", web.get("error"))
+
+    grounded = build_assistant_answer(
+        result, message=message, corpus=hc, web=web, memory=memory
+    )
+    logger.info("Assistant chat: %s -> %s (%s) web=%s followup=%s",
+                message[:80], result.get("state"), detected_lang, web_used, was_followup)
     return {
         "answer": grounded["answer"],
         "citations": grounded["citations"],
+        "web_sources": grounded.get("web_sources", []),
+        "web_used": grounded.get("web_used", False),
+        "web_search_enabled": is_web_search_enabled(),
         "suggested_followups": grounded["suggested_followups"],
         "state": result.get("state", "error"),
         "message": result.get("message"),
-        "query": orig_q,
+        "query": message,
+        "resolved_query": resolved_q,
+        "followup_resolved": was_followup,
         "normalized_query": normalized_q,
         "detected_language": detected_lang,
         "recommendations": recs,

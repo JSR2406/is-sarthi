@@ -18,10 +18,23 @@ class Settings(BaseSettings):
     # --- Models ---
     embedding_model: str = "intfloat/multilingual-e5-base"
     reranker_model: str = "BAAI/bge-reranker-base"
+
+    # --- LLM / web tools ---
     llm_provider: str = "stub"  # anthropic | openai | local | stub
     llm_model: str = "claude-sonnet-4-6"
     llm_api_key: str = ""
     local_llm_url: str = "http://localhost:11434/api/generate"
+
+    # --- Tavily web search (AI copilot live-context tool) ---
+    # Accepts IS_TAVILY_API_KEY via env prefix; plain TAVILY_API_KEY is also
+    # honoured at runtime (see api/services/web_search.py). Empty = web tool
+    # disabled, copilot degrades to corpus-only answers.
+    tavily_api_key: str = ""
+    tavily_max_results: int = 5
+    tavily_search_depth: str = "advanced"  # basic | advanced
+    tavily_include_answer: bool = True
+    tavily_include_domains: str = ""  # comma-separated allowlist, e.g. "bis.gov.in,prsindia.org"
+    tavily_timeout_seconds: int = 15
 
     # --- Crawling politeness ---
     crawl_delay_seconds: float = 1.5

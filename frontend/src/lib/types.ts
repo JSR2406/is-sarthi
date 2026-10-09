@@ -270,13 +270,26 @@ export interface AssistantCitation {
   band?: string;
 }
 
+export interface AssistantWebSource {
+  title: string;
+  url: string;
+  snippet?: string;
+  score?: number;
+  published_date?: string | null;
+}
+
 export interface AssistantChatResponse {
   answer: string;
   citations: AssistantCitation[];
+  web_sources?: AssistantWebSource[];
+  web_used?: boolean;
+  web_search_enabled?: boolean;
   suggested_followups: string[];
   state: 'ok' | 'low_confidence' | 'error';
   message?: string;
   query: string;
+  resolved_query?: string;
+  followup_resolved?: boolean;
   normalized_query?: string;
   detected_language?: string;
   recommendations: Recommendation[];

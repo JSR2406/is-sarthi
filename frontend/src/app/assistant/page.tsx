@@ -1,18 +1,21 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { MessageCircle, Send, Loader2, ExternalLink, Sparkles, RotateCcw } from 'lucide-react';
+import {
+  MessageCircle, Send, Loader2, ExternalLink, Sparkles, RotateCcw,
+  Globe, History, Trash2, X,
+} from 'lucide-react';
 import { askAssistant, getStandardDetailUrl } from '@/lib/api';
 import { logHistory } from '@/lib/history';
+import {
+  ChatSession, StoredChatMessage,
+  deleteChatSession, listChatSessions, saveChatSession,
+} from '@/lib/chatHistory';
 import PageHeader from '@/components/PageHeader';
-import { ChatTurn, AssistantChatResponse } from '@/lib/types';
+import { ChatTurn, AssistantChatResponse, AssistantWebSource } from '@/lib/types';
 
-interface DisplayMsg extends ChatTurn {
-  citations?: AssistantChatResponse['citations'];
-  followups?: string[];
-  state?: string;
-}
+type DisplayMsg = StoredChatMessage;
 
 const QUICK_PROMPTS = [
   'Which standard applies to 3-core armoured copper cable for 1100V underground laying?',
@@ -26,35 +29,70 @@ export default function AssistantPage() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // null = auto (server decides per query); true/false = force on/off.
+  const [webMode, setWebMode] = useState<boolean | null>(null);
+  // Conversation memory: active session id + persisted session list.
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Hydrate session list (and last session) from localStorage after mount.
+  useEffect(() => {
+    const stored = listChatSessions();
+    setSessions(stored);
+    if (stored.length > 0) {
+      setSessionId(stored[0].id);
+      setMessages(stored[0].messages);
+    }
+  }, []);
+
+  const persistSession = (next: DisplayMsg[], id: string | null): string => {
+    const savedId = saveChatSession(next, id);
+    setSessionId(savedId);
+    setSessions(listChatSessions());
+    return savedId;
+  };
 
   const send = async (override?: string) => {
     const text = (override ?? input).trim();
     if (!text || loading) return;
     setError(null);
-    const userMsg: DisplayMsg = { role: 'user', content: text };
-    const history: ChatTurn[] = [...messages, userMsg]
-      .filter((m) => m.role === 'user' || m.role === 'assistant')
+    const userMsg: DisplayMsg = { role: 'user', content: text, ts: Date.now() };
+    const base = [...messages, userMsg];
+    // Prior turns only (exclude the new user message) — server resolves follow-ups.
+    const history: ChatTurn[] = messages
       .slice(-10)
+      .filter((m) => m.role === 'user' || m.role === 'assistant')
       .map((m) => ({ role: m.role, content: m.content }));
-    setMessages((prev) => [...prev, userMsg]);
+    setMessages(base);
     setInput('');
     setLoading(true);
     try {
-      const res = await askAssistant(text, history.slice(0, -1));
+      const res = await askAssistant(text, history, 5, { useWeb: webMode });
       const assistantMsg: DisplayMsg = {
         role: 'assistant',
         content: res.answer,
         citations: res.citations,
+        webSources: res.web_sources ?? [],
+        webUsed: res.web_used ?? false,
         followups: res.suggested_followups,
         state: res.state,
+        ts: Date.now(),
       };
-      setMessages((prev) => [...prev, assistantMsg]);
+      const next = [...base, assistantMsg];
+      setMessages(next);
+      persistSession(next, sessionId);
       try {
-        logHistory('chat', text.slice(0, 120), `${res.citations.length} citations`, '/assistant');
+        const extras: string[] = [];
+        if (res.citations.length) extras.push(`${res.citations.length} citations`);
+        if (res.web_used) extras.push('web context');
+        if (res.followup_resolved) extras.push('follow-up resolved');
+        logHistory('chat', text.slice(0, 120), extras.join(' · ') || undefined, '/assistant');
       } catch { /* history is non-critical */ }
     } catch (err: any) {
       setError(err.message || 'Assistant request failed. Try again.');
+      persistSession(base, sessionId);
     } finally {
       setLoading(false);
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
@@ -62,10 +100,32 @@ export default function AssistantPage() {
   };
 
   const reset = () => {
+    if (messages.length > 0) persistSession(messages, sessionId);
     setMessages([]);
+    setSessionId(null);
     setError(null);
     setInput('');
   };
+
+  const resumeSession = (s: ChatSession) => {
+    if (messages.length > 0) persistSession(messages, sessionId);
+    setSessionId(s.id);
+    setMessages(s.messages);
+    setError(null);
+    setHistoryOpen(false);
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+  };
+
+  const removeSession = (id: string) => {
+    deleteChatSession(id);
+    setSessions(listChatSessions());
+    if (sessionId === id) {
+      setSessionId(null);
+      setMessages([]);
+    }
+  };
+
+  const activeTitle = sessions.find((s) => s.id === sessionId)?.title;
 
   return (
     <div className="space-y-6">
@@ -73,20 +133,89 @@ export default function AssistantPage() {
         icon={MessageCircle}
         eyebrow="Grounded Q&A"
         title="Standards Assistant (Manak AI)"
-        description="Ask in plain language — English, Hindi, or Marathi. Every answer is grounded in retrieved BIS standards with citations. No invented relations or certifications."
+        description="Ask in plain language — English, Hindi, or Marathi. Every answer is grounded in retrieved BIS standards with citations. Toggle Web for live Tavily-backed context (QCO updates, amendments, news) shown as separate sources. Conversations are remembered on this device."
         actions={
-          messages.length > 0 ? (
+          <>
             <button
               type="button"
-              onClick={reset}
+              onClick={() => setHistoryOpen((o) => !o)}
               className="btn-secondary"
+              aria-expanded={historyOpen}
             >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>New chat</span>
+              <History className="w-3.5 h-3.5" />
+              <span>History{sessions.length > 0 ? ` (${sessions.length})` : ''}</span>
             </button>
-          ) : undefined
+            {messages.length > 0 && (
+              <button
+                type="button"
+                onClick={reset}
+                className="btn-secondary"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>New chat</span>
+              </button>
+            )}
+          </>
         }
       />
+
+      {historyOpen && (
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-3">
+          <div className="flex items-center justify-between pb-2">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              Conversation history — stored on this device only
+            </p>
+            <button
+              type="button"
+              onClick={() => setHistoryOpen(false)}
+              className="text-slate-400 hover:text-slate-600"
+              aria-label="Close history"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          {sessions.length === 0 ? (
+            <p className="text-xs text-slate-400 py-3">No saved conversations yet.</p>
+          ) : (
+            <ul className="space-y-1.5 max-h-56 overflow-y-auto">
+              {sessions.map((s) => (
+                <li
+                  key={s.id}
+                  className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs ${
+                    s.id === sessionId
+                      ? 'border-blue-300 bg-blue-50/60'
+                      : 'border-slate-200 hover:border-blue-300 bg-white'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => resumeSession(s)}
+                    className="flex-1 min-w-0 text-left"
+                  >
+                    <span className="block font-semibold text-slate-800 truncate" title={s.title}>
+                      {s.title}
+                    </span>
+                    <span className="block text-[10px] text-slate-400">
+                      {new Date(s.updated_at).toLocaleString(undefined, {
+                        day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+                      })}
+                      {' · '}{s.messages.filter((m) => m.role === 'user').length} message(s)
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeSession(s.id)}
+                    className="text-slate-300 hover:text-red-500 p-1"
+                    aria-label={`Delete conversation: ${s.title}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {messages.length === 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -107,6 +236,11 @@ export default function AssistantPage() {
       )}
 
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm min-h-[320px] max-h-[520px] overflow-y-auto p-4 space-y-4">
+        {activeTitle && (
+          <p className="text-[11px] text-slate-400 border-b border-slate-100 pb-2">
+            Resumed conversation: <span className="font-medium text-slate-500">{activeTitle}</span>
+          </p>
+        )}
         {messages.length === 0 && !loading && (
           <div className="flex h-64 flex-col items-center justify-center gap-2 px-4 text-center">
             <MessageCircle className="h-10 w-10 text-slate-300" aria-hidden />
@@ -163,6 +297,31 @@ export default function AssistantPage() {
                       </div>
                     </div>
                   )}
+                  {m.webSources && m.webSources.length > 0 && (
+                    <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-2">
+                      <p className="px-1 pb-1.5 text-[11px] font-bold uppercase tracking-wider text-blue-500 flex items-center gap-1">
+                        <Globe className="w-3 h-3" />
+                        Live web sources ({m.webSources.length}) — verify before citing
+                      </p>
+                      <div className="space-y-1.5">
+                        {m.webSources.map((w, wi) => (
+                          <a
+                            key={`${w.url}-${wi}`}
+                            href={w.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center justify-between gap-2 bg-white border border-blue-100 hover:border-blue-400 rounded-lg px-2.5 py-1.5 text-xs"
+                          >
+                            <span className="flex items-center gap-1.5 font-semibold text-blue-900">
+                              <span className="flex h-4 w-4 items-center justify-center rounded-full bg-blue-600 text-[9px] text-white">W{wi + 1}</span>
+                              <span className="line-clamp-1 max-w-[220px]" title={w.title}>{w.title || w.url}</span>
+                            </span>
+                            <ExternalLink className="w-3 h-3 text-slate-400 shrink-0" />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <>{m.content}</>
@@ -202,6 +361,21 @@ export default function AssistantPage() {
       )}
 
       <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm flex items-center gap-2">
+        <button
+          type="button"
+          title={webMode === null ? 'Web search: auto' : webMode ? 'Web search: on' : 'Web search: off'}
+          onClick={() => setWebMode((m) => (m === null ? true : m === true ? false : null))}
+          className={`flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs font-semibold border shrink-0 ${
+            webMode === null
+              ? 'bg-slate-100 border-slate-300 text-slate-600'
+              : webMode
+                ? 'bg-blue-600 border-blue-600 text-white'
+                : 'bg-white border-slate-300 text-slate-400'
+          }`}
+        >
+          <Globe className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">{webMode === null ? 'Web auto' : webMode ? 'Web on' : 'Web off'}</span>
+        </button>
         <input
           type="text"
           value={input}

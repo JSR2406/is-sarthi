@@ -226,11 +226,21 @@ export async function ingestProcurementTender(
 export async function askAssistant(
   message: string,
   history: ChatTurn[] = [],
-  top_k: number = 5
-): Promise<AssistantChatResponse> {  const res = await fetch(`${API_BASE}/assistant/chat`, {
+  top_k: number = 5,
+  opts?: { useWeb?: boolean | null }
+): Promise<AssistantChatResponse> {  const body: Record<string, unknown> = {
+    message,
+    history: history.slice(-10),
+    top_k,
+  };
+  // null/undefined = auto (server decides); true/false = force on/off.
+  if (opts?.useWeb !== undefined && opts?.useWeb !== null) {
+    body.use_web = opts.useWeb;
+  }
+  const res = await fetch(`${API_BASE}/assistant/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, history: history.slice(-10), top_k }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: 'Assistant request failed' }));

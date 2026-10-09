@@ -33,5 +33,7 @@ PyYAML>=6.0
 anthropic>=0.25
 # openai>=1.14
 
+# --- web search tool (Tavily; uses `requests` above, no extra dep required) ---
+
 # --- dev ---
 pytest>=8.0
