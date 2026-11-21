@@ -1,6 +1,6 @@
 # IS Sarthi
 
-**AI-Powered Recommendation Engine for Identifying Applicable Indian Standards for Procurement Specifications**
+A procurement research prototype that retrieves and ranks candidate Indian Standards for a product specification. Review corpus coverage in the [data source notes](docs/DATA_SOURCES.md) and use the official BIS catalog to confirm current requirements before relying on recommendations.
 
 SIH 2026 — Bureau of Indian Standards (BIS) Problem Statement
 
@@ -77,6 +77,11 @@ streamlit run ui/app.py
 Open http://localhost:8501. The seed corpus ships with the repo, so the demo works offline — the live pipeline is additive, not a prerequisite.
 
 ---
+
+## Evaluation and source coverage
+
+- [Evaluation protocol](docs/EVALUATION.md) describes how to assess recommendation quality.
+- [Corpus audit](docs/bis-corpus-audit.md) records ingestion and coverage limitations.
 
 ## Running the live pipeline
 
